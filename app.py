@@ -21,59 +21,80 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
     else:
         with st.spinner(f"Đang tải báo cáo tài chính cho {ticker_input.upper()}..."):
             try:
-                tk = ticker_input.upper()
-                # Gọi 4 Endpoint cơ bản (Luôn miễn phí)
+                tk = ticker_input.upper().strip()
+
                 url_profile = f"https://financialmodelingprep.com/api/v3/profile/{tk}?apikey={api_key}"
                 url_is = f"https://financialmodelingprep.com/api/v3/income-statement/{tk}?limit=1&apikey={api_key}"
                 url_bs = f"https://financialmodelingprep.com/api/v3/balance-sheet-statement/{tk}?limit=1&apikey={api_key}"
                 url_cf = f"https://financialmodelingprep.com/api/v3/cash-flow-statement/{tk}?limit=1&apikey={api_key}"
-                
-                res_prof = requests.get(url_profile).json()
-                res_is = requests.get(url_is).json()
-                res_bs = requests.get(url_bs).json()
-                res_cf = requests.get(url_cf).json()
-                
-                if len(res_prof) > 0 and len(res_is) > 0 and len(res_bs) > 0 and len(res_cf) > 0:
-                    prof = res_prof[0]
-                    inc = res_is[0]
-                    bal = res_bs[0]
-                    cf = res_cf[0]
-                    
-                    # --- TỰ ĐỘNG TÍNH TOÁN BẰNG TOÁN HỌC ---
-                    # Ngăn lỗi chia cho 0
-                    liabilities = bal.get('totalCurrentLiabilities', 1) or 1
-                    equity = bal.get('totalStockholdersEquity', 1) or 1
-                    revenue = inc.get('revenue', 1) or 1
-                    mcap = prof.get('mktCap', 1) or 1
-                    
-                    calc_current_ratio = bal.get('totalCurrentAssets', 0) / liabilities
-                    calc_debt_equity = bal.get('totalDebt', 0) / equity
-                    calc_gross_margin = (inc.get('grossProfit', 0) / revenue) * 100
-                    calc_net_margin = (inc.get('netIncome', 0) / revenue) * 100
-                    calc_roe = (inc.get('netIncome', 0) / equity) * 100
-                    calc_fcf_yield = (cf.get('freeCashFlow', 0) / mcap) * 100
-                    
-                    # Lấy PE và Cổ tức
-                    calc_pe = prof.get('pe', 20.0) # Có thể null
-                    if not calc_pe: calc_pe = 20.0
-                    
-                    st.session_state.data = {
-                        'current_ratio': calc_current_ratio,
-                        'debt_equity': calc_debt_equity,
-                        'gross_margin': calc_gross_margin,
-                        'net_margin': calc_net_margin,
-                        'roe': calc_roe,
-                        'ttm_pe': calc_pe,
-                        'fcf_yield': calc_fcf_yield,
-                        'div_yield': 0.0 # Để an toàn, người dùng tự cộng cổ tức và mua lại cổ phiếu
-                    }
-                    st.session_state.data_loaded = True
-                    st.sidebar.success("Tải & Tính toán thành công!")
-                else:
-                    st.sidebar.error("Không tìm thấy dữ liệu báo cáo cho mã này.")
-            except Exception as e:
-                st.sidebar.error(f"Lỗi hệ thống: {e}")
 
+                resp_prof = requests.get(url_profile, timeout=20)
+                resp_is = requests.get(url_is, timeout=20)
+                resp_bs = requests.get(url_bs, timeout=20)
+                resp_cf = requests.get(url_cf, timeout=20)
+
+                prof_json = resp_prof.json()
+                is_json = resp_is.json()
+                bs_json = resp_bs.json()
+                cf_json = resp_cf.json()
+
+                st.sidebar.write("Profile status:", resp_prof.status_code)
+                st.sidebar.write("IS status:", resp_is.status_code)
+                st.sidebar.write("BS status:", resp_bs.status_code)
+                st.sidebar.write("CF status:", resp_cf.status_code)
+
+                def get_first_record(payload, name):
+                    if isinstance(payload, dict):
+                        if "Error Message" in payload:
+                            raise ValueError(f"{name}: {payload['Error Message']}")
+                        if "error" in payload:
+                            raise ValueError(f"{name}: {payload['error']}")
+                        if "errors" in payload:
+                            raise ValueError(f"{name}: {payload['errors']}")
+                        raise ValueError(f"{name}: Dữ liệu trả về không đúng định dạng list.")
+                    if not isinstance(payload, list) or len(payload) == 0:
+                        raise ValueError(f"{name}: Không có dữ liệu cho mã {tk}.")
+                    return payload[0]
+
+                prof = get_first_record(prof_json, "Profile")
+                inc = get_first_record(is_json, "Income Statement")
+                bal = get_first_record(bs_json, "Balance Sheet")
+                cf = get_first_record(cf_json, "Cash Flow")
+
+                current_assets = bal.get('totalCurrentAssets') or 0
+                current_liabilities = bal.get('totalCurrentLiabilities') or 0
+                total_debt = bal.get('totalDebt') or 0
+                equity = bal.get('totalStockholdersEquity') or 0
+                revenue = inc.get('revenue') or 0
+                gross_profit = inc.get('grossProfit') or 0
+                net_income = inc.get('netIncome') or 0
+                free_cash_flow = cf.get('freeCashFlow') or 0
+                market_cap = prof.get('mktCap') or 0
+
+                calc_current_ratio = current_assets / current_liabilities if current_liabilities else 0
+                calc_debt_equity = total_debt / equity if equity else 0
+                calc_gross_margin = (gross_profit / revenue) * 100 if revenue else 0
+                calc_net_margin = (net_income / revenue) * 100 if revenue else 0
+                calc_roe = (net_income / equity) * 100 if equity else 0
+                calc_fcf_yield = (free_cash_flow / market_cap) * 100 if market_cap else 0
+                calc_pe = prof.get('pe') or 0
+
+                st.session_state.data = {
+                    'current_ratio': calc_current_ratio,
+                    'debt_equity': calc_debt_equity,
+                    'gross_margin': calc_gross_margin,
+                    'net_margin': calc_net_margin,
+                    'roe': calc_roe,
+                    'ttm_pe': calc_pe,
+                    'fcf_yield': calc_fcf_yield,
+                    'div_yield': 0.0
+                }
+
+                st.session_state.data_loaded = True
+                st.sidebar.success("Tải & tính toán thành công!")
+
+            except Exception as e:
+                st.sidebar.error(f"Lỗi hệ thống: {str(e)}")
 # Lấy dữ liệu từ session
 d = st.session_state.data if st.session_state.data_loaded else {}
 
