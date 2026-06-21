@@ -42,6 +42,13 @@ if st.sidebar.button("🚀 Tải dữ liệu từ Fiscal.ai"):
                     }
                     st.session_state.data_loaded = True
                     st.sidebar.success("Tải dữ liệu Fiscal.ai thành công!")
+                                    if response.status_code == 200:
+                    info = response.json()
+                    
+                    st.sidebar.success("Tải dữ liệu Fiscal.ai thành công!")
+                    st.sidebar.json(info) # ---> THÊM DÒNG NÀY VÀO ĐÂY! <---
+                    
+                    # (Giả lập việc bóc tách JSON...)
                 else:
                     st.sidebar.error(f"Lỗi API: {response.status_code}. Vui lòng kiểm tra mã cổ phiếu (VD: NASDAQ_AAPL) và API Key.")
             except Exception as e:
