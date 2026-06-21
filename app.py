@@ -4,11 +4,11 @@ import requests
 st.set_page_config(page_title="Hệ Thống 50 Điểm (FMP Data)", layout="wide")
 
 st.title("📈 Hệ Thống Chấm Điểm Đầu Tư Giá Trị (50-Point System)")
-st.markdown("Hệ thống tự động tải dữ liệu tài chính (TTM) từ Financial Modeling Prep (FMP).")
+st.markdown("Hệ thống tự động tải báo cáo tài chính gốc từ FMP và tự động tính toán các chỉ số.")
 
-# --- TẠO THANH CÔNG CỤ BÊN TRÁI (SIDEBAR) ---
+# --- TẠO THANH CÔNG CỤ BÊN TRÁI ---
 st.sidebar.header("🔍 Tải Dữ Liệu Tự Động")
-ticker_input = st.sidebar.text_input("Nhập mã cổ phiếu Mỹ (VD: AAPL, MSFT, NVDA)", value="AAPL")
+ticker_input = st.sidebar.text_input("Nhập mã cổ phiếu Mỹ (VD: AAPL, MSFT)", value="AAPL")
 api_key = st.sidebar.text_input("Nhập FMP API Key của bạn:", type="password")
 
 if 'data_loaded' not in st.session_state:
@@ -19,45 +19,62 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
     if not api_key:
         st.sidebar.error("Vui lòng nhập API Key từ FMP!")
     else:
-        with st.spinner(f"Đang tải dữ liệu TTM cho {ticker_input.upper()}..."):
+        with st.spinner(f"Đang tải báo cáo tài chính cho {ticker_input.upper()}..."):
             try:
-                # 1. Gọi API lấy Key Metrics TTM (PE, ROE, Yield)
-                url_metrics = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker_input.upper()}?apikey={api_key}"
-                res_metrics = requests.get(url_metrics)
+                tk = ticker_input.upper()
+                # Gọi 4 Endpoint cơ bản (Luôn miễn phí)
+                url_profile = f"https://financialmodelingprep.com/api/v3/profile/{tk}?apikey={api_key}"
+                url_is = f"https://financialmodelingprep.com/api/v3/income-statement/{tk}?limit=1&apikey={api_key}"
+                url_bs = f"https://financialmodelingprep.com/api/v3/balance-sheet-statement/{tk}?limit=1&apikey={api_key}"
+                url_cf = f"https://financialmodelingprep.com/api/v3/cash-flow-statement/{tk}?limit=1&apikey={api_key}"
                 
-                # 2. Gọi API lấy Financial Ratios TTM (Margins, Debt/Equity, Ratios)
-                url_ratios = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{ticker_input.upper()}?apikey={api_key}"
-                res_ratios = requests.get(url_ratios)
+                res_prof = requests.get(url_profile).json()
+                res_is = requests.get(url_is).json()
+                res_bs = requests.get(url_bs).json()
+                res_cf = requests.get(url_cf).json()
                 
-                if res_metrics.status_code == 200 and res_ratios.status_code == 200:
-                    metrics_data = res_metrics.json()
-                    ratios_data = res_ratios.json()
+                if len(res_prof) > 0 and len(res_is) > 0 and len(res_bs) > 0 and len(res_cf) > 0:
+                    prof = res_prof[0]
+                    inc = res_is[0]
+                    bal = res_bs[0]
+                    cf = res_cf[0]
                     
-                    if len(metrics_data) > 0 and len(ratios_data) > 0:
-                        m = metrics_data[0]
-                        r = ratios_data[0]
-                        
-                        # Bóc tách và lưu dữ liệu vào Session (Quy đổi % nếu cần)
-                        st.session_state.data = {
-                            'current_ratio': r.get('currentRatioTTM', 1.0),
-                            'debt_equity': r.get('debtEquityRatioTTM', 0.5),
-                            'gross_margin': r.get('grossProfitMarginTTM', 0.45) * 100,
-                            'net_margin': r.get('netProfitMarginTTM', 0.16) * 100,
-                            'roe': m.get('roeTTM', 0.20) * 100,
-                            'ttm_pe': m.get('peRatioTTM', 22.0),
-                            'fcf_yield': m.get('freeCashFlowYieldTTM', 0.04) * 100,
-                            'div_yield': m.get('dividendYieldPercentageTTM', 0.0)
-                        }
-                        st.session_state.data_loaded = True
-                        st.sidebar.success("Tải dữ liệu FMP thành công!")
-                    else:
-                        st.sidebar.error("Không tìm thấy dữ liệu cho mã này trên FMP.")
+                    # --- TỰ ĐỘNG TÍNH TOÁN BẰNG TOÁN HỌC ---
+                    # Ngăn lỗi chia cho 0
+                    liabilities = bal.get('totalCurrentLiabilities', 1) or 1
+                    equity = bal.get('totalStockholdersEquity', 1) or 1
+                    revenue = inc.get('revenue', 1) or 1
+                    mcap = prof.get('mktCap', 1) or 1
+                    
+                    calc_current_ratio = bal.get('totalCurrentAssets', 0) / liabilities
+                    calc_debt_equity = bal.get('totalDebt', 0) / equity
+                    calc_gross_margin = (inc.get('grossProfit', 0) / revenue) * 100
+                    calc_net_margin = (inc.get('netIncome', 0) / revenue) * 100
+                    calc_roe = (inc.get('netIncome', 0) / equity) * 100
+                    calc_fcf_yield = (cf.get('freeCashFlow', 0) / mcap) * 100
+                    
+                    # Lấy PE và Cổ tức
+                    calc_pe = prof.get('pe', 20.0) # Có thể null
+                    if not calc_pe: calc_pe = 20.0
+                    
+                    st.session_state.data = {
+                        'current_ratio': calc_current_ratio,
+                        'debt_equity': calc_debt_equity,
+                        'gross_margin': calc_gross_margin,
+                        'net_margin': calc_net_margin,
+                        'roe': calc_roe,
+                        'ttm_pe': calc_pe,
+                        'fcf_yield': calc_fcf_yield,
+                        'div_yield': 0.0 # Để an toàn, người dùng tự cộng cổ tức và mua lại cổ phiếu
+                    }
+                    st.session_state.data_loaded = True
+                    st.sidebar.success("Tải & Tính toán thành công!")
                 else:
-                    st.sidebar.error("Lỗi API Key hoặc Lỗi kết nối. Vui lòng kiểm tra lại Key.")
+                    st.sidebar.error("Không tìm thấy dữ liệu báo cáo cho mã này.")
             except Exception as e:
-                st.sidebar.error("Lỗi kết nối mạng.")
+                st.sidebar.error(f"Lỗi hệ thống: {e}")
 
-# Lấy dữ liệu từ session (nếu có), nếu không dùng số mặc định
+# Lấy dữ liệu từ session
 d = st.session_state.data if st.session_state.data_loaded else {}
 
 # --- GIAO DIỆN CHIA 3 TAB ---
@@ -65,7 +82,7 @@ tab1, tab2, tab3 = st.tabs(["🟢 Tier 1: Cơ Bản", "🔵 Tier 2: Tăng Trư�
 
 with tab1:
     st.header("Hạng Mục 1: Các Yếu Tố Cơ Bản (Max 15 Pts)")
-    st.caption("Dữ liệu tự động (TTM) từ FMP. Bạn có thể tự chỉnh sửa các ô.")
+    st.caption("Dữ liệu tự động tính toán từ Báo cáo tài chính gốc (FMP).")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -86,7 +103,7 @@ with tab1:
         net_debt_ebitda = st.number_input("Net Debt / EBITDA", value=0.5)
         div_cagr_5y = st.number_input("5-Year Dividend CAGR (%)", value=5.0)
 
-    # Tính điểm Tier 1 (Giữ nguyên luật của bạn)
+    # Tính điểm Tier 1
     t1_score = 0.0
     t1_score += 1.0 if current_ratio >= 1.5 else (0.5 if 1.0 <= current_ratio < 1.5 else 0)
     t1_score += 1.0 if debt_equity <= 0.8 else (0.5 if 0.8 < debt_equity <= 1.0 else 0)
@@ -105,7 +122,6 @@ with tab1:
 
 with tab2:
     st.header("Hạng Mục 2: Chỉ Số Tăng Trưởng (Max 17.5 Pts)")
-    st.info("Nhập tay các chỉ số CAGR 5 năm để đảm bảo độ chính xác cao nhất cho chiến lược Giá trị.")
     rev_cagr = st.number_input("5-Year Revenue CAGR (%)", value=15.0)
     next_rev = st.number_input("Next-Year Forecast Revenue Growth (%)", value=18.0)
     fcf_cagr = st.number_input("5-Year FCF CAGR (%)", value=12.0)
@@ -144,11 +160,11 @@ with tab3:
     
     with col_a:
         ni_cagr = st.number_input("5-Yr Net Income CAGR (%)", value=16.0)
-        ttm_pe = st.number_input("TTM P/E Ratio (FMP Data)", value=float(d.get('ttm_pe', 22.0)))
+        ttm_pe = st.number_input("P/E Ratio", value=float(d.get('ttm_pe', 22.0)))
         
     with col_b:
         eps_growth = st.number_input("Next-Yr EPS Growth (%)", value=22.0)
-        fwd_pe = st.number_input("Forward P/E Ratio", value=19.0) # Fwd PE cần gọi Endpoint khác, để người dùng nhập tay là tối ưu nhất.
+        fwd_pe = st.number_input("Forward P/E Ratio", value=19.0) 
         
     hist_pe_diff = st.selectbox("Current P/E vs 5-Yr Hist P/E", 
                                 [">30% Discount", "20-30% Discount", "10-20% Discount", 
