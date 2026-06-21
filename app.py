@@ -16,6 +16,24 @@ if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
     st.session_state.data = {}
 
+def safe_json(response, name):
+    content_type = response.headers.get("Content-Type", "")
+    text = response.text.strip()
+
+    if response.status_code != 200:
+        raise ValueError(f"{name}: HTTP {response.status_code} - {text[:300]}")
+
+    if not text:
+        raise ValueError(f"{name}: Response rỗng.")
+
+    if "application/json" not in content_type.lower() and not text.startswith("[") and not text.startswith("{"):
+        raise ValueError(f"{name}: Response không phải JSON. Nội dung đầu: {text[:300]}")
+
+    try:
+        return response.json()
+    except Exception:
+        raise ValueError(f"{name}: Không parse được JSON. Nội dung đầu: {text[:300]}")
+
 def get_first_record(payload, name, ticker):
     if isinstance(payload, dict):
         if "Error Message" in payload:
@@ -56,17 +74,21 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
                 resp_cf = requests.get(url_cf, timeout=20)
                 resp_est = requests.get(url_est, timeout=20)
 
-                quote_json = resp_quote.json()
-                is_json = resp_is.json()
-                bs_json = resp_bs.json()
-                cf_json = resp_cf.json()
-                est_json = resp_est.json()
-
                 st.sidebar.write("Quote status:", resp_quote.status_code)
                 st.sidebar.write("IS status:", resp_is.status_code)
                 st.sidebar.write("BS status:", resp_bs.status_code)
                 st.sidebar.write("CF status:", resp_cf.status_code)
                 st.sidebar.write("EST status:", resp_est.status_code)
+
+                quote_json = safe_json(resp_quote, "Quote")
+                is_json = safe_json(resp_is, "Income Statement")
+                bs_json = safe_json(resp_bs, "Balance Sheet")
+                cf_json = safe_json(resp_cf, "Cash Flow")
+
+                try:
+                    est_json = safe_json(resp_est, "Analyst Estimates")
+                except Exception:
+                    est_json = []
 
                 quote = get_first_record(quote_json, "Quote", tk)
                 bal = get_first_record(bs_json, "Balance Sheet", tk)
@@ -340,7 +362,7 @@ c4.metric("TỔNG ĐIỂM", f"{total_score} / 50.0")
 if total_score >= 40:
     st.success("Tín hiệu: CỰC KỲ XUẤT SẮC.")
 elif total_score >= 30:
-    st.info("Tín hiệu: RẤT TỐT.")
+    st.info("Tín hiệu: RẤT T���T.")
 elif total_score >= 20:
     st.warning("Tín hiệu: TRUNG BÌNH.")
 else:
