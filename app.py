@@ -21,15 +21,15 @@ if st.sidebar.button("🚀 Tải dữ liệu từ Fiscal.ai"):
     else:
         with st.spinner(f"Đang tải dữ liệu cho {ticker_input}..."):
             try:
-                # Gọi Endpoint Ratios hoặc Financials của Fiscal.ai
-                # (Lưu ý: Endpoint dưới đây là ví dụ theo tài liệu chuẩn của Fiscal.ai)
                 url = f"https://api.fiscal.ai/v1/company/profile?companyKey={ticker_input.upper()}&apiKey={api_key}"
                 response = requests.get(url)
                 
                 if response.status_code == 200:
                     info = response.json()
                     
-                    # (Giả lập việc bóc tách JSON từ Fiscal.ai - Bạn cần chỉnh sửa keys dựa trên JSON trả về thực tế từ Endpoint Ratios)
+                    st.sidebar.success("Tải dữ liệu Fiscal.ai thành công!")
+                    st.sidebar.json(info)
+                    
                     st.session_state.data = {
                         'current_ratio': info.get('currentRatio', 1.0),
                         'debt_equity': info.get('debtToEquity', 0.5),
@@ -41,17 +41,10 @@ if st.sidebar.button("🚀 Tải dữ liệu từ Fiscal.ai"):
                         'div_yield': info.get('dividendYield', 0.0)
                     }
                     st.session_state.data_loaded = True
-                    st.sidebar.success("Tải dữ liệu Fiscal.ai thành công!")
-                                    if response.status_code == 200:
-                    info = response.json()
-                    
-                    st.sidebar.success("Tải dữ liệu Fiscal.ai thành công!")
-                    st.sidebar.json(info) # ---> THÊM DÒNG NÀY VÀO ĐÂY! <---
-                    
-                    # (Giả lập việc bóc tách JSON...)
                 else:
-                    st.sidebar.error(f"Lỗi API: {response.status_code}. Vui lòng kiểm tra mã cổ phiếu (VD: NASDAQ_AAPL) và API Key.")
+                    st.sidebar.error(f"Lỗi API: {response.status_code}. Vui lòng kiểm tra mã cổ phiếu.")
             except Exception as e:
+                st.sidebar.error("Lỗi kết nối mạng.")
                 st.sidebar.error("Lỗi kết nối mạng.")
 
 # (Phần Code giao diện các Tab Tier 1, 2, 3 và Tính điểm giữ nguyên như phiên bản Yahoo Finance)
