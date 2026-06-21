@@ -6,7 +6,7 @@ st.set_page_config(page_title="Hệ Thống 50 Điểm (FMP Stable)", layout="wi
 BASE_URL = "https://financialmodelingprep.com/stable"
 
 st.title("📈 Hệ Thống Chấm Điểm Đầu Tư Giá Trị (50-Point System)")
-st.markdown("Tự động tải dữ liệu từ Financial Modeling Prep Stable API và tính các chỉ số cơ bản từ báo cáo tài chính gốc.")
+st.markdown("Tự động tải dữ liệu từ Financial Modeling Prep Stable API và tự tính các chỉ số cho Tier 1, Tier 2 và một phần Tier 3.")
 
 st.sidebar.header("🔍 Tải Dữ Liệu Tự Động")
 ticker_input = st.sidebar.text_input("Nhập mã cổ phiếu Mỹ (VD: AAPL, MSFT, NVDA)", value="AAPL")
@@ -29,6 +29,13 @@ def get_first_record(payload, name, ticker):
         raise ValueError(f"{name}: Không có dữ liệu cho mã {ticker}.")
     return payload[0]
 
+def calc_cagr(begin_value, end_value, years):
+    if begin_value is None or end_value is None:
+        return 0.0
+    if begin_value <= 0 or end_value <= 0 or years <= 0:
+        return 0.0
+    return ((end_value / begin_value) ** (1 / years) - 1) * 100
+
 if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
     if not api_key:
         st.sidebar.error("Vui lòng nhập FMP API Key.")
@@ -38,29 +45,44 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
                 tk = ticker_input.upper().strip()
 
                 url_quote = f"{BASE_URL}/quote?symbol={tk}&apikey={api_key}"
-                url_is = f"{BASE_URL}/income-statement?symbol={tk}&limit=1&apikey={api_key}"
+                url_is = f"{BASE_URL}/income-statement?symbol={tk}&limit=6&apikey={api_key}"
                 url_bs = f"{BASE_URL}/balance-sheet-statement?symbol={tk}&limit=1&apikey={api_key}"
-                url_cf = f"{BASE_URL}/cash-flow-statement?symbol={tk}&limit=1&apikey={api_key}"
+                url_cf = f"{BASE_URL}/cash-flow-statement?symbol={tk}&limit=6&apikey={api_key}"
+                url_est = f"{BASE_URL}/analyst-estimates?symbol={tk}&apikey={api_key}"
 
                 resp_quote = requests.get(url_quote, timeout=20)
                 resp_is = requests.get(url_is, timeout=20)
                 resp_bs = requests.get(url_bs, timeout=20)
                 resp_cf = requests.get(url_cf, timeout=20)
+                resp_est = requests.get(url_est, timeout=20)
 
                 quote_json = resp_quote.json()
                 is_json = resp_is.json()
                 bs_json = resp_bs.json()
                 cf_json = resp_cf.json()
+                est_json = resp_est.json()
 
                 st.sidebar.write("Quote status:", resp_quote.status_code)
                 st.sidebar.write("IS status:", resp_is.status_code)
                 st.sidebar.write("BS status:", resp_bs.status_code)
                 st.sidebar.write("CF status:", resp_cf.status_code)
+                st.sidebar.write("EST status:", resp_est.status_code)
 
                 quote = get_first_record(quote_json, "Quote", tk)
-                inc = get_first_record(is_json, "Income Statement", tk)
                 bal = get_first_record(bs_json, "Balance Sheet", tk)
-                cf = get_first_record(cf_json, "Cash Flow", tk)
+
+                if isinstance(is_json, dict):
+                    raise ValueError(f"Income Statement: {is_json}")
+                if isinstance(cf_json, dict):
+                    raise ValueError(f"Cash Flow: {cf_json}")
+
+                if not isinstance(is_json, list) or len(is_json) < 2:
+                    raise ValueError(f"Income Statement: Không đủ dữ liệu nhiều năm cho mã {tk}.")
+                if not isinstance(cf_json, list) or len(cf_json) < 2:
+                    raise ValueError(f"Cash Flow: Không đủ dữ liệu nhiều năm cho mã {tk}.")
+
+                inc = is_json[0]
+                cf = cf_json[0]
 
                 current_assets = bal.get("totalCurrentAssets") or 0
                 current_liabilities = bal.get("totalCurrentLiabilities") or 0
@@ -76,11 +98,11 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
                 gross_profit = inc.get("grossProfit") or 0
                 net_income = inc.get("netIncome") or 0
                 ebitda = inc.get("ebitda") or 0
-
                 free_cash_flow = cf.get("freeCashFlow") or 0
 
                 market_cap = quote.get("marketCap") or 0
                 pe_ratio = quote.get("pe") or quote.get("priceEarningsRatio") or 0
+                current_eps = quote.get("eps") or 0
 
                 calc_current_ratio = current_assets / current_liabilities if current_liabilities else 0
                 calc_debt_equity = total_debt / equity if equity else 0
@@ -91,6 +113,44 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
                 calc_cash_vs_debt = "Cash > ST Debt" if cash_and_short_term > short_term_debt else "Cash <= ST Debt"
                 calc_intangibles_ratio = ((goodwill + intangible_assets) / total_assets) if total_assets else 0
                 calc_net_debt_ebitda = ((total_debt - cash_and_short_term) / ebitda) if ebitda else 0
+
+                rev_idx = min(5, len(is_json) - 1)
+                cf_idx = min(5, len(cf_json) - 1)
+
+                rev_latest = is_json[0].get("revenue") or 0
+                rev_oldest = is_json[rev_idx].get("revenue") or 0
+                revenue_cagr_5y = calc_cagr(rev_oldest, rev_latest, rev_idx)
+
+                ni_latest = is_json[0].get("netIncome") or 0
+                ni_oldest = is_json[rev_idx].get("netIncome") or 0
+                net_income_cagr_5y = calc_cagr(ni_oldest, ni_latest, rev_idx)
+
+                fcf_latest = cf_json[0].get("freeCashFlow") or 0
+                fcf_oldest = cf_json[cf_idx].get("freeCashFlow") or 0
+                fcf_cagr_5y = calc_cagr(fcf_oldest, fcf_latest, cf_idx)
+
+                next_rev_growth = 0.0
+                next_eps_growth = 0.0
+
+                if isinstance(est_json, list) and len(est_json) > 0:
+                    est0 = est_json[0]
+
+                    estimated_revenue = (
+                        est0.get("estimatedRevenueAvg")
+                        or est0.get("estimatedRevenue")
+                        or est0.get("revenueAvg")
+                        or 0
+                    )
+
+                    estimated_eps = (
+                        est0.get("estimatedEpsAvg")
+                        or est0.get("estimatedEps")
+                        or est0.get("epsAvg")
+                        or 0
+                    )
+
+                    next_rev_growth = ((estimated_revenue / rev_latest) - 1) * 100 if rev_latest and estimated_revenue else 0
+                    next_eps_growth = ((estimated_eps / current_eps) - 1) * 100 if current_eps and estimated_eps else 0
 
                 st.session_state.data = {
                     "current_ratio": calc_current_ratio,
@@ -103,7 +163,12 @@ if st.sidebar.button("🚀 Tải dữ liệu từ FMP"):
                     "cash_vs_debt": calc_cash_vs_debt,
                     "intangibles": calc_intangibles_ratio,
                     "net_debt_ebitda": calc_net_debt_ebitda,
-                    "div_yield": 0.0
+                    "div_yield": 0.0,
+                    "rev_cagr_5y": revenue_cagr_5y,
+                    "fcf_cagr_5y": fcf_cagr_5y,
+                    "ni_cagr_5y": net_income_cagr_5y,
+                    "next_rev_growth": next_rev_growth,
+                    "next_eps_growth": next_eps_growth
                 }
 
                 st.session_state.data_loaded = True
@@ -161,10 +226,9 @@ with tab1:
 
 with tab2:
     st.header("Hạng Mục 2: Chỉ Số Tăng Trưởng (Max 17.5 Pts)")
-    st.info("Các chỉ số CAGR 5 năm và forecast nên nhập tay hoặc tính riêng để đảm bảo đúng logic hệ thống của bạn.")
-    rev_cagr = st.number_input("5-Year Revenue CAGR (%)", value=15.0)
-    next_rev = st.number_input("Next-Year Forecast Revenue Growth (%)", value=18.0)
-    fcf_cagr = st.number_input("5-Year FCF CAGR (%)", value=12.0)
+    rev_cagr = st.number_input("5-Year Revenue CAGR (%)", value=float(d.get("rev_cagr_5y", 15.0)))
+    next_rev = st.number_input("Next-Year Forecast Revenue Growth (%)", value=float(d.get("next_rev_growth", 18.0)))
+    fcf_cagr = st.number_input("5-Year FCF CAGR (%)", value=float(d.get("fcf_cagr_5y", 12.0)))
 
     def score_growth(val, mode):
         if val >= 30: return 2.5 if mode == "rev5" else 5.0
@@ -196,14 +260,15 @@ with tab2:
 
 with tab3:
     st.header("Hạng Mục 3: Định Giá (Max 17.5 Pts)")
+    st.caption("Đã tự động tính Net Income CAGR 5 năm, Next-Year EPS Growth và TTM P/E. Matrix 3C vẫn nên chọn tay.")
     col_a, col_b = st.columns(2)
 
     with col_a:
-        ni_cagr = st.number_input("5-Yr Net Income CAGR (%)", value=16.0)
+        ni_cagr = st.number_input("5-Yr Net Income CAGR (%)", value=float(d.get("ni_cagr_5y", 16.0)))
         ttm_pe = st.number_input("TTM P/E Ratio", value=float(d.get("ttm_pe", 22.0)))
 
     with col_b:
-        eps_growth = st.number_input("Next-Yr EPS Growth (%)", value=22.0)
+        eps_growth = st.number_input("Next-Yr EPS Growth (%)", value=float(d.get("next_eps_growth", 22.0)))
         fwd_pe = st.number_input("Forward P/E Ratio", value=19.0)
 
     hist_pe_diff = st.selectbox(
